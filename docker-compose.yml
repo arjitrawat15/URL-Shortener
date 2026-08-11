@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: url-shortener-postgres
+    environment:
+      POSTGRES_DB: urlshortener
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"  # Use different port to avoid conflict
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - url-shortener-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: url-shortener-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6380:6379"  # Use different port to avoid conflict
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - url-shortener-network
+
+  # Spring Boot Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: url-shortener-app
+    environment:
+      # Database Configuration
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/urlshortener
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      
+      # JPA Configuration
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_SHOW_SQL: "false"
+      SPRING_JPA_PROPERTIES_HIBERNATE_DIALECT: org.hibernate.dialect.PostgreSQLDialect
+      
+      # Redis Configuration
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_DATA_REDIS_TIMEOUT: 2000ms
+      
+      # Application Configuration
+      URL_SHORTENER_BASE_URL: http://localhost:8080
+      URL_SHORTENER_CACHE_TTL_DAYS: 7
+      
+      # Rate Limiting
+      URL_SHORTENER_RATE_LIMIT_SHORTEN_REQUESTS_PER_MINUTE: 100
+      URL_SHORTENER_RATE_LIMIT_REDIRECT_REQUESTS_PER_MINUTE: 1000
+      URL_SHORTENER_RATE_LIMIT_WINDOW_SECONDS: 60
+      
+      # Background Jobs
+      URL_SHORTENER_SYNC_INTERVAL_MINUTES: 5
+      URL_SHORTENER_SYNC_BATCH_SIZE: 100
+      URL_SHORTENER_SYNC_MAX_COUNTERS_PER_RUN: 10000
+      
+      # Actuator (for health checks and metrics)
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info,prometheus
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: always
+      
+      # Logging
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_COM_SHORTENER: DEBUG
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - url-shortener-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  url-shortener-network:
+    driver: bridge
+
